@@ -142,31 +142,34 @@ def search_books_by_subject(user_input):
 
     print(f"🔍 Searching subjects for: '{user_input}'")
     
-    # GUNAKAN LEVENSHTEIN DISTANCE seperti di fungsi lain
+    # GUNAKAN LEVENSHTEIN DISTANCE - cari yang terbaik tanpa threshold dulu
     for keyword in subject_keywords:
-        similarity = levenshtein_similarity(user_input.lower(), keyword)
+        similarity = levenshtein_similarity(user_input.lower(), keyword.lower())
         print(f"   '{keyword}' = {similarity:.1f}%")
         
-        if similarity > best_similarity and similarity >= 70:  # threshold 70%
+        if similarity > best_similarity:
             best_similarity = similarity
             matched_subject = keyword
 
-    # Fallback: cek exact substring match (tapi tetap hitung scorenya)
-    if not matched_subject:
+    # Jika tidak ada yang bagus, coba substring match
+    if best_similarity < 60:  # Threshold minimum untuk dianggap match
         for keyword in subject_keywords:
             if keyword in user_input.lower() or user_input.lower() in keyword:
-                matched_subject = keyword
-                # Hitung score yang lebih realistis untuk substring match
-                best_similarity = min(85, levenshtein_similarity(user_input.lower(), keyword))
-                print(f"📍 Substring match '{keyword}' = {best_similarity:.1f}%")
-                break
+                # Hitung ulang similarity untuk substring match
+                substring_score = levenshtein_similarity(user_input.lower(), keyword.lower())
+                if substring_score > best_similarity:
+                    matched_subject = keyword
+                    best_similarity = substring_score
+                    print(f"📍 Substring match '{keyword}' = {best_similarity:.1f}%")
 
-    if not matched_subject:
-        print("❌ No subject match found")
+    # Minimal 30% similarity untuk dianggap valid
+    if not matched_subject or best_similarity < 30:
+        print("❌ No subject match found (score too low)")
         return None, 0, None
 
     print(f"✅ Best subject match: '{matched_subject}' with {best_similarity:.1f}%")
 
+    # Query database untuk books dengan subject yang cocok
     conn = get_db_connection()
     if conn is None:
         return None, 0, None
@@ -175,7 +178,7 @@ def search_books_by_subject(user_input):
         cur = conn.cursor(dictionary=True)
         query = """
         SELECT title, location FROM books 
-        WHERE subject LIKE %s AND availability = 'tersedia'
+        WHERE LOWER(subject) LIKE LOWER(%s) AND availability = 'tersedia'
         ORDER BY title
         """
         cur.execute(query, ('%' + matched_subject + '%',))
@@ -186,10 +189,10 @@ def search_books_by_subject(user_input):
             total = len(results)
             daftar_judul = "\n".join([f"{i+1}. {row['title']}" for i, row in enumerate(results)])
             response = f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
-            return response, best_similarity, matched_subject
+            return response, round(best_similarity, 1), matched_subject
         else:
             response = f"Maaf, belum ada buku {matched_subject} yang tersedia saat ini."
-            return response, best_similarity, matched_subject
+            return response, round(best_similarity, 1), matched_subject
 
     except Error as e:
         print("❌ DB Error (search_books_by_subject):", e)
@@ -217,18 +220,20 @@ def search_books_by_title(user_input):
         for book in books:
             # Menggunakan Levenshtein similarity
             score = levenshtein_similarity(user_input.lower(), book['title'].lower())
-            if score > best_score and score >= 75:  # threshold 75%
+            if score > best_score:
                 best_score = score
                 matched_book = book
-                print(f"   '{book['title']}' = {score:.1f}%")
+                if score > 80:  # Log high matches
+                    print(f"   '{book['title']}' = {score:.1f}%")
 
-        if matched_book:
+        # Minimal 60% untuk title match
+        if matched_book and best_score >= 60:
             status = "tersedia" if matched_book['availability'] == 'tersedia' else "sedang dipinjam"
             response = f"Buku \"{matched_book['title']}\" saat ini {status} (rak {matched_book['location']})"
             print(f"✅ Best title match: '{matched_book['title']}' with {best_score:.1f}%")
-            return response, best_score, matched_book['title']
+            return response, round(best_score, 1), matched_book['title']
 
-        print("❌ No title match found")
+        print("❌ No title match found (score too low)")
         return None, 0, None
     except Error as e:
         print("❌ DB Error (search_books_by_title):", e)
@@ -241,7 +246,7 @@ def find_best_match(user_input):
     user_input_clean = clean_text(user_input)
     print(f"\n🎯 Processing: '{user_input}' -> '{user_input_clean}'")
 
-    # PRIORITAS 1: FAQ/Intent (60% threshold)
+    # PRIORITAS 1: FAQ/Intent
     best_faq_score = 0
     best_faq_response = ""
     best_faq_pattern = ""
@@ -256,47 +261,50 @@ def find_best_match(user_input):
                 best_faq_score = similarity
                 best_faq_response = random.choice(intent['responses'])
                 best_faq_pattern = pattern
-                if similarity > 80:  # Log high matches
-                    print(f"   High match: '{pattern}' = {similarity:.1f}%")
+                if similarity > 70:  # Log high matches
+                    print(f"   High match: '{pattern[:30]}...' = {similarity:.1f}%")
 
-    print(f"📚 Best FAQ match: {best_faq_score:.1f}% - '{best_faq_pattern[:50]}...'")
+    print(f"📚 Best FAQ match: {best_faq_score:.1f}%")
 
-    # PRIORITAS 2: Subject Buku (70% threshold)
-    subject_response, subject_score, subject_keyword = search_books_by_subject(user_input_clean)
-    if not subject_response:
-        subject_score = 0
-        subject_keyword = None
+    # PRIORITAS 2: Subject Buku
+    subject_result = search_books_by_subject(user_input_clean)
+    if subject_result and len(subject_result) == 3:
+        subject_response, subject_score, subject_keyword = subject_result
+    else:
+        subject_response, subject_score, subject_keyword = None, 0, None
     
     print(f"🔖 Subject search: {subject_score:.1f}% - '{subject_keyword}'")
 
-    # PRIORITAS 3: Judul Buku (75% threshold)
-    book_title_response, book_score, book_title = search_books_by_title(user_input_clean)
-    if not book_title_response:
-        book_score = 0
-        book_title = None
+    # PRIORITAS 3: Judul Buku
+    title_result = search_books_by_title(user_input_clean)
+    if title_result and len(title_result) == 3:
+        book_title_response, book_score, book_title = title_result
+    else:
+        book_title_response, book_score, book_title = None, 0, None
     
     print(f"📖 Title search: {book_score:.1f}% - '{book_title}'")
 
-    # LOGIKA PRIORITAS BERDASARKAN SCORE TERTINGGI
+    # LOGIKA PEMILIHAN BERDASARKAN SCORE TERTINGGI
     candidates = []
     
-    if best_faq_score >= 60:
+    # Tambahkan kandidat yang memenuhi threshold minimum
+    if best_faq_score >= 50:  # FAQ threshold 50%
         candidates.append((best_faq_response, best_faq_score, best_faq_pattern, "FAQ"))
     
-    if subject_score >= 70:
+    if subject_score >= 60:  # Subject threshold 60%
         candidates.append((subject_response, subject_score, f"subject:{subject_keyword}", "SUBJECT"))
     
-    if book_score >= 75:
+    if book_score >= 60:  # Title threshold 60%
         candidates.append((book_title_response, book_score, book_title, "TITLE"))
 
+    # Jika ada kandidat, pilih yang score tertinggi
     if candidates:
-        # Pilih yang score tertinggi
         best_candidate = max(candidates, key=lambda x: x[1])
         response, score, pattern, type_match = best_candidate
         print(f"🏆 Winner: {type_match} with {score:.1f}%")
         return response, round(score, 1), pattern
     
-    # Jika tidak ada yang memenuhi threshold, pilih yang terbaik atau default
+    # Fallback: pilih yang terbaik meski di bawah threshold
     all_scores = []
     
     if best_faq_score > 0:
@@ -309,7 +317,7 @@ def find_best_match(user_input):
     if all_scores:
         best_fallback = max(all_scores, key=lambda x: x[1])
         response, score, pattern, type_match = best_fallback
-        if score >= 40:  # threshold minimum untuk fallback
+        if score >= 25:  # threshold minimum untuk fallback
             print(f"🔄 Fallback: {type_match} with {score:.1f}%")
             return response, round(score, 1), pattern
 
@@ -361,7 +369,7 @@ def reload_intents():
             "message": f"Gagal reload intents: {e}"
         })
 
-# Route untuk debug (hanya untuk development)
+# Route untuk debug basic
 @app.route("/debug")
 def debug_search():
     query = request.args.get("q", "technology")
@@ -381,14 +389,69 @@ def debug_search():
         })
     return jsonify({"error": "Provide ?q=your_query parameter"})
 
+# Route untuk debug detail scoring
+@app.route("/debug-detail")
+def debug_detail():
+    query = request.args.get("q", "psikolog")
+    
+    # Test Levenshtein calculation dengan contoh
+    test_subjects = ["psikologi", "technology", "sejarah", "matematika", "fisika", "kimia"]
+    results = {}
+    
+    for subject in test_subjects:
+        score = levenshtein_similarity(query.lower(), subject.lower())
+        results[subject] = round(score, 1)
+    
+    # Test actual database subjects
+    subjects = get_all_subject_keywords()
+    db_results = {}
+    for subject in subjects:
+        score = levenshtein_similarity(query.lower(), subject.lower())
+        if score > 0:  # Hanya tampilkan yang ada score
+            db_results[subject] = round(score, 1)
+    
+    # Sort db_results by score descending
+    db_results_sorted = dict(sorted(db_results.items(), key=lambda x: x[1], reverse=True))
+    
+    return jsonify({
+        "query": query,
+        "cleaned_query": clean_text(query),
+        "test_scores": results,
+        "database_subjects": db_results_sorted,
+        "levenshtein_tests": {
+            "psikolog_vs_psikologi": round(levenshtein_similarity("psikolog", "psikologi"), 1),
+            "technology_vs_tech": round(levenshtein_similarity("technology", "tech"), 1),
+            "exact_match": round(levenshtein_similarity("test", "test"), 1)
+        },
+        "total_subjects_in_db": len(subjects)
+    })
+
+# Route untuk melihat semua subjects di database
+@app.route("/subjects")
+def view_subjects():
+    subjects = get_all_subject_keywords()
+    return jsonify({
+        "total": len(subjects),
+        "subjects": sorted(subjects)
+    })
+
 # Health check untuk Railway
 @app.route("/health")
 def health_check():
     try:
         conn = get_db_connection()
         if conn:
+            # Test query
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            cur.fetchone()
+            cur.close()
             conn.close()
-            return jsonify({"status": "healthy", "database": "connected"})
+            return jsonify({
+                "status": "healthy", 
+                "database": "connected",
+                "intents_loaded": len(intents.get('intents', []))
+            })
         else:
             return jsonify({"status": "unhealthy", "database": "disconnected"}), 500
     except Exception as e:
