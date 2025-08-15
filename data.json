@@ -1,0 +1,52 @@
+{
+    "intents": [
+        {
+            "tag": "greeting",
+            "patterns": ["Halo", "Apa kabar?", "Selamat datang"],
+            "responses": ["Halo! Selamat datang di perpustakaan. Bagaimana saya bisa membantu?", "Hai! Ada yang bisa saya bantu di perpustakaan?"],
+            "context": [""]
+        },
+        {
+            "tag": "goodbye",
+            "patterns": ["Selamat tinggal", "Sampai jumpa", "Terima kasih"],
+            "responses": ["Sampai jumpa! Semoga harimu menyenangkan.", "Terima kasih telah mengunjungi perpustakaan kami."],
+            "context": [""]
+        },
+        {
+            "tag": "thanks",
+            "patterns": ["Terima kasih", "Makasih", "Itu sangat membantu"],
+            "responses": ["Senang bisa membantu!", "Kapan saja, jangan ragu untuk bertanya."],
+            "context": [""]
+        },
+        {
+            "tag": "rules",
+            "patterns": ["Apa saja peraturan di perpustakaan?", "Peraturan perpustakaan apa yang harus saya tahu?", "Ada larangan di perpustakaan?"],
+            "responses": ["Dilarang makan dan minum, dan diharapkan menjaga ketenangan.", "Silakan tidak membuat keributan dan menjaga kebersihan."],
+            "context": [""]
+        },
+        {
+            "tag": "book_search",
+            "patterns": ["Saya ingin mencari buku", "Buku apa saja yang ada di sini?", "Tolong bantu saya mencari buku"],
+            "responses": ["Silakan sebutkan judul atau penulis buku yang Anda cari.", "Apa judul buku yang ingin Anda temukan?"],
+            "context": ["search_book"]
+        },
+        {
+            "tag": "search_book",
+            "patterns": [],
+            "responses": ["Sedang mencari buku... Mohon tunggu.", "Memuat informasi buku yang Anda cari."],
+            "context": [""]
+        },
+        {
+            "tag": "library_hours",
+            "patterns": ["Jam buka perpustakaan?", "Kapan perpustakaan buka?", "Apa jam operasional perpustakaan?"],
+            "responses": ["Perpustakaan buka dari Senin sampai Jumat, pukul 08.00 hingga 17.00.", "Kami buka setiap hari kerja, dari pukul 08.00 hingga 17.00."],
+            "context": [""]
+        },
+        {
+            "tag": "membership",
+            "patterns": ["Bagaimana cara mendaftar menjadi anggota?", "Apa syarat menjadi anggota perpustakaan?", "Saya ingin menjadi anggota perpustakaan"],
+            "responses": ["Anda perlu mengisi formulir pendaftaran dan membawa identitas diri.", "Silakan datang ke meja informasi untuk pendaftaran anggota."],
+            "context": [""]
+        }
+    ]
+}

@@ -1,0 +1,8 @@
+Flask
+mysql-connector-python
+fuzzywuzzy
+python-Levenshtein
+gTTS
+python-dotenv
+gunicorn
+uwsgi==2.0.30
