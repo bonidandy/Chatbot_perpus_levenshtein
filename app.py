@@ -4,7 +4,7 @@ import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
 
-# Load .env (untuk local dev, Railway otomatis inject ENV)
+# Load .env (buat local dev, Railway inject ENV otomatis)
 load_dotenv()
 
 app = Flask(__name__)
@@ -14,7 +14,7 @@ app.static_folder = "static"
 # Konstanta threshold
 # ==============================
 THRESH_INTENT  = 60.0   # FAQ/intent
-THRESH_SUBJECT = 70.0   # subject buku
+THRESH_SUBJECT = 60.0   # subject buku
 THRESH_TITLE   = 75.0   # judul buku
 
 # ==============================
