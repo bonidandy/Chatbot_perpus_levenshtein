@@ -1,54 +1,56 @@
-import json, os, random, re, tempfile
+import json, os, random, re
 from flask import Flask, render_template, request, jsonify
-from gtts import gTTS
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
 
-# Memuat variabel lingkungan dari .env (untuk pengembangan lokal)
+# Load .env (untuk local dev, Railway otomatis inject ENV)
 load_dotenv()
 
 app = Flask(__name__)
 app.static_folder = "static"
 
-# Konfigurasi database untuk Railway
+# ==============================
+# Konstanta threshold
+# ==============================
+THRESH_INTENT  = 60.0   # FAQ/intent
+THRESH_SUBJECT = 70.0   # subject buku
+THRESH_TITLE   = 75.0   # judul buku
+
+# ==============================
+# Konfigurasi database (Railway + Local)
+# ==============================
 DB_CONFIG = {
-    'host': os.getenv('DB_HOST', 'mysql.railway.internal'),
-    'port': int(os.getenv('DB_PORT', 3306)),
-    'user': os.getenv('DB_USER', 'root'),
-    'password': os.getenv('DB_PASSWORD'),
-    'database': os.getenv('DB_NAME', 'railway'),
-    'autocommit': True,
-    'charset': 'utf8mb4',
-    'collation': 'utf8mb4_unicode_ci',
-    'connect_timeout': 60,
-    'buffered': True
+    "host": os.getenv("DB_HOST", "mysql.railway.internal"),
+    "port": int(os.getenv("DB_PORT", 3306)),
+    "user": os.getenv("DB_USER", "root"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME", "railway"),
+    "autocommit": True,
+    "charset": "utf8mb4",
+    "collation": "utf8mb4_unicode_ci",
+    "connect_timeout": 60,
+    "buffered": True,
 }
 
-# Fungsi untuk mendapatkan koneksi database
 def get_db_connection():
     try:
-        config = {k: v for k, v in DB_CONFIG.items() if v is not None}
-        connection = mysql.connector.connect(**config)
-        if connection.is_connected():
-            return connection
-        else:
-            return None
+        conn = mysql.connector.connect(**DB_CONFIG)
+        if conn.is_connected():
+            return conn
     except Error as e:
-        print(f"Error connecting to MySQL: {e}")
-        return None
+        print(f"❌ DB Connection Error: {e}")
+    return None
 
-# Implementasi Levenshtein Distance murni
+# ==============================
+# Levenshtein
+# ==============================
 def levenshtein_distance(s1, s2):
-    """
-    Menghitung Levenshtein Distance antara dua string
-    """
     if len(s1) < len(s2):
         return levenshtein_distance(s2, s1)
-    
     if len(s2) == 0:
         return len(s1)
-    
+
     previous_row = list(range(len(s2) + 1))
     for i, c1 in enumerate(s1):
         current_row = [i + 1]
@@ -58,33 +60,29 @@ def levenshtein_distance(s1, s2):
             substitutions = previous_row[j] + (c1 != c2)
             current_row.append(min(insertions, deletions, substitutions))
         previous_row = current_row
-    
     return previous_row[-1]
 
 def levenshtein_similarity(s1, s2):
-    """
-    Mengkonversi Levenshtein Distance ke similarity score (0-100)
-    """
     max_len = max(len(s1), len(s2))
     if max_len == 0:
         return 100.0
-    
     distance = levenshtein_distance(s1, s2)
-    similarity = ((max_len - distance) / max_len) * 100
-    return similarity
+    return ((max_len - distance) / max_len) * 100.0
 
-# Load intents dari MySQL dengan koneksi Railway
+def clean_text(text):
+    return re.sub(r"[^\w\s]", "", text.lower()).strip()
+
+# ==============================
+# Load intents dari MySQL
+# ==============================
 def load_intents_from_db():
     conn = get_db_connection()
     if conn is None:
-        print("❌ Koneksi database gagal!")
         return {"intents": []}
-    
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT * FROM intents")
         rows = cur.fetchall()
-
         intents = {"intents": []}
         for row in rows:
             intents["intents"].append({
@@ -97,17 +95,14 @@ def load_intents_from_db():
         print("❌ Database error:", e)
         return {"intents": []}
     finally:
-        if conn.is_connected():
-            cur.close()
-            conn.close()
+        cur.close()
+        conn.close()
 
-# Load intents saat aplikasi dimulai
 intents = load_intents_from_db()
 
-def clean_text(text):
-    return re.sub(r"[^\w\s]", "", text.lower()).strip()
-
-# Cari subject dari buku dengan koneksi Railway
+# ==============================
+# Data buku
+# ==============================
 def get_all_subject_keywords():
     conn = get_db_connection()
     if conn is None:
@@ -124,35 +119,34 @@ def get_all_subject_keywords():
         cur.close()
         conn.close()
 
-# Cari judul buku menggunakan Levenshtein Distance
 def search_books_by_title(user_input):
     conn = get_db_connection()
     if conn is None:
-        return None, 0, None
-    
+        return None, 0.0, None
     try:
         cur = conn.cursor(dictionary=True)
         cur.execute("SELECT title, availability, location FROM books")
         books = cur.fetchall()
 
-        best_score = 0
+        best_score = 0.0
         matched_book = None
+        ui = user_input.lower()
 
         for book in books:
-            # Menggunakan Levenshtein similarity
-            score = levenshtein_similarity(user_input.lower(), book['title'].lower())
-            if score > best_score and score >= 75:
+            score = levenshtein_similarity(ui, book['title'].lower())
+            if score > best_score and score >= THRESH_TITLE:
                 best_score = score
                 matched_book = book
 
         if matched_book:
             status = "tersedia" if matched_book['availability'] == 'tersedia' else "sedang dipinjam"
-            return f"Buku \"{matched_book['title']}\" saat ini {status} (rak {matched_book['location']})", best_score, matched_book['title']
+            response = f"Buku \"{matched_book['title']}\" saat ini {status} (rak {matched_book['location']})"
+            return response, best_score, matched_book['title']
 
-        return None, 0, None
+        return None, 0.0, None
     except Error as e:
         print("❌ DB Error (search_books_by_title):", e)
-        return None, 0, None
+        return None, 0.0, None
     finally:
         cur.close()
         conn.close()
@@ -160,35 +154,31 @@ def search_books_by_title(user_input):
 def search_books_by_subject(user_input):
     subject_keywords = get_all_subject_keywords()
     matched_subject = None
-    best_similarity = 0
+    best_similarity = 0.0
+    ui = user_input.lower()
 
-    # Cari subject dengan similarity terbaik menggunakan Levenshtein
     for keyword in subject_keywords:
-        similarity = levenshtein_similarity(user_input.lower(), keyword)
-        if similarity > best_similarity and similarity >= 70:
+        similarity = levenshtein_similarity(ui, keyword)
+        if similarity > best_similarity:
             best_similarity = similarity
             matched_subject = keyword
 
-    # Fallback: cek apakah keyword ada dalam input
-    if not matched_subject:
+    if (not matched_subject) or (best_similarity < THRESH_SUBJECT):
         for keyword in subject_keywords:
-            if keyword in user_input.lower():
+            if keyword in ui:
                 matched_subject = keyword
+                best_similarity = max(best_similarity, 80.0)
                 break
 
-    if not matched_subject:
-        return None
+    if not matched_subject or best_similarity < THRESH_SUBJECT:
+        return None, 0.0, None
 
     conn = get_db_connection()
     if conn is None:
-        return None
-    
+        return None, 0.0, None
     try:
         cur = conn.cursor(dictionary=True)
-        query = """
-        SELECT title, location FROM books 
-        WHERE subject LIKE %s AND availability = 'tersedia'
-        """
+        query = "SELECT title, location FROM books WHERE subject LIKE %s AND availability = 'tersedia'"
         cur.execute(query, ('%' + matched_subject + '%',))
         results = cur.fetchall()
 
@@ -196,56 +186,52 @@ def search_books_by_subject(user_input):
             lokasi_rak = results[0]['location']
             total = len(results)
             daftar_judul = "\n".join([f"{i+1}. {row['title']}" for i, row in enumerate(results)])
-            return (
-                f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
-            )
+            response = f"Ada {total} buku tentang {matched_subject} di rak {lokasi_rak}:\n{daftar_judul}"
         else:
-            return f"Maaf, belum ada buku {matched_subject} yang tersedia saat ini."
+            response = f"Maaf, belum ada buku {matched_subject} yang tersedia saat ini."
 
+        return response, best_similarity, f"subject:{matched_subject}"
     except Error as e:
-        print("❌ DB Error (books):", e)
-        return None
+        print("❌ DB Error (search_books_by_subject):", e)
+        return None, 0.0, None
     finally:
         cur.close()
         conn.close()
 
+# ==============================
+# Orkestrasi pemilihan jawaban
+# ==============================
 def find_best_match(user_input):
-    user_input = clean_text(user_input)
+    ui_clean = clean_text(user_input)
 
-    # PRIORITAS 1: FAQ/Intent (60%) - UTAMA
-    best_score = 0
-    best_response = ""
-    best_pattern = ""
-
+    # Intent
+    best_score, best_response, best_pattern = 0.0, "", ""
     for intent in intents['intents']:
         for pattern in intent['patterns']:
             pattern_clean = clean_text(pattern)
-            
-            # Menggunakan Levenshtein similarity murni
-            similarity = levenshtein_similarity(user_input, pattern_clean)
-            
+            similarity = levenshtein_similarity(ui_clean, pattern_clean)
             if similarity > best_score:
                 best_score = similarity
                 best_response = random.choice(intent['responses'])
                 best_pattern = pattern
-
-    # Jika FAQ cocok dengan threshold 60%, langsung return
-    if best_score >= 60:
+    if best_score >= THRESH_INTENT:
         return best_response, best_score, best_pattern
 
-    # PRIORITAS 2: Subject Buku (70%)
-    dynamic_book_response = search_books_by_subject(user_input)
-    if dynamic_book_response:
-        return dynamic_book_response, 100, "pencarian_subject"
+    # Subject
+    subj_resp, subj_score, subj_pattern = search_books_by_subject(user_input)
+    if subj_resp:
+        return subj_resp, subj_score, subj_pattern
 
-    # PRIORITAS 3: Judul Buku (75%)
-    book_title_response, book_score, book_pattern = search_books_by_title(user_input)
-    if book_title_response:
-        return book_title_response, book_score, book_pattern
+    # Title
+    title_resp, title_score, title_pattern = search_books_by_title(user_input)
+    if title_resp:
+        return title_resp, title_score, title_pattern
 
-    # Default response jika semua gagal
-    return "Maaf, saya tidak mengerti maksud Anda.", 0, ""
+    return "Maaf, saya tidak mengerti maksud Anda, silakan pergi ke staf untuk pertanyaan lebih lanjut.", 0.0, ""
 
+# ==============================
+# Routes
+# ==============================
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -255,22 +241,10 @@ def get_bot_response():
     user_txt = request.args.get("msg", "").strip()
     if not user_txt:
         return jsonify({"response": "Mohon masukkan pesan Anda.", "score": 0, "pattern": ""})
-
     response, score, pattern = find_best_match(user_txt)
-    return jsonify({
-        "response": response,
-        "score": score,
-        "pattern": pattern
-    })
-
-# Route untuk reload intents (berguna untuk development)
-@app.route("/reload-intents")
-def reload_intents():
-    global intents
-    intents = load_intents_from_db()
-    return jsonify({"status": "success", "message": "Intents berhasil di-reload"})
+    print(f"[BOT] pattern={pattern} | score={score:.2f} | user='{user_txt}'")
+    return jsonify({"response": response, "score": score, "pattern": pattern})
 
 if __name__ == "__main__":
-    # Untuk Railway deployment
-    port = int(os.environ.get('PORT', 5000))
-    app.run(debug=False, host='0.0.0.0', port=port)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
