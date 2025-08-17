@@ -94,21 +94,69 @@
       msgerChat.scrollTop += 500;
     }
 
-    // Fungsi untuk mendapatkan respon bot
-function botResponse(rawText) {
-  $.get("/get", { msg: rawText }).done(function (data) {
-    console.log("User    :", rawText);
-    console.log("Pattern :", data.pattern || "(tidak cocok)");
-    console.log("Score   :", data.score);  // ✅ muncul di console
-    console.log("Bot     :", data.response);
+    // Fungsi untuk mendapatkan respon bot dengan detail logging
+    function botResponse(rawText) {
+      const startTime = performance.now();
+      
+      $.get("/get", { msg: rawText }).done(function (data) {
+        const endTime = performance.now();
+        const responseTime = (endTime - startTime).toFixed(2);
+        
+        // Enhanced console logging
+        console.log("================== CHATBOT RESPONSE ANALYSIS ==================");
+        console.log("📝 User Input    :", rawText);
+        console.log("🎯 Pattern Match :", data.pattern || "(tidak ada pattern yang cocok)");
+        console.log("📊 Confidence    :", `${data.score.toFixed(2)}% (${getConfidenceLevel(data.score)})`);
+        console.log("🤖 Bot Response :", data.response);
+        console.log("⏱️  Response Time:", `${responseTime} ms`);
+        console.log("🔍 Match Type    :", determineMatchType(data.pattern, data.score));
+        console.log("✅ Status       :", getResponseStatus(data.score));
+        console.log("==============================================================");
 
-    appendMessage(BOT_NAME, BOT_IMG, "left", data.response);
-  });
-}
+        // Tambahan info untuk debugging
+        if (data.score < 60) {
+          console.warn("⚠️  LOW CONFIDENCE: Chatbot mungkin tidak yakin dengan jawabannya");
+        } else if (data.score >= 90) {
+          console.log("🎉 EXCELLENT MATCH: Chatbot sangat yakin dengan jawabannya");
+        }
 
+        appendMessage(BOT_NAME, BOT_IMG, "left", data.response);
+      }).fail(function(xhr, status, error) {
+        console.error("❌ Error getting bot response:", error);
+        appendMessage(BOT_NAME, BOT_IMG, "left", "Maaf, terjadi kesalahan. Silakan coba lagi.");
+      });
+    }
 
+    // Fungsi helper untuk menentukan level confidence
+    function getConfidenceLevel(score) {
+      if (score >= 90) return "Sangat Tinggi";
+      if (score >= 75) return "Tinggi";
+      if (score >= 60) return "Sedang";
+      if (score >= 40) return "Rendah";
+      return "Sangat Rendah";
+    }
 
+    // Fungsi untuk menentukan jenis match
+    function determineMatchType(pattern, score) {
+      if (!pattern) return "Default Response (tidak ada match)";
+      
+      if (pattern.includes("subject:")) {
+        return "Subject/Kategori Buku";
+      } else if (score >= 75) {
+        return "FAQ/Intent atau Judul Buku";
+      } else if (score >= 60) {
+        return "FAQ/Intent";
+      }
+      return "Pattern Match";
+    }
 
+    // Fungsi untuk status response
+    function getResponseStatus(score) {
+      if (score >= 75) return "✅ Jawaban Akurat";
+      if (score >= 60) return "⚠️  Jawaban Cukup Akurat";
+      if (score > 0) return "❓ Jawaban Kurang Akurat";
+      return "❌ Default Response";
+    }
 
     // Fungsi untuk pengenalan suara menggunakan Web Speech API
     function startVoiceRecognition() {
@@ -116,23 +164,23 @@ function botResponse(rawText) {
       recognition.lang = 'id-ID'; // Ubah sesuai kebutuhan, misalnya 'id-ID' untuk bahasa Indonesia
 
       recognition.onstart = function () {
-        console.log("Voice recognition started. Speak into the microphone.");
+        console.log("🎤 Voice recognition started. Speak into the microphone.");
       };
 
       recognition.onspeechend = function () {
-        console.log("Voice recognition ended.");
+        console.log("🔇 Voice recognition ended.");
         recognition.stop();
       };
 
       recognition.onresult = function (event) {
         const transcript = event.results[0][0].transcript;
-        console.log("Recognized text:", transcript);
+        console.log("🗣️  Recognized text:", transcript);
         appendMessage(PERSON_NAME, PERSON_IMG, "right", transcript);
         botResponse(transcript);
       };
 
       recognition.onerror = function (event) {
-        console.error("Error occurred in recognition:", event.error);
+        console.error("❌ Error occurred in recognition:", event.error);
       };
 
       recognition.start();
@@ -153,6 +201,10 @@ function botResponse(rawText) {
       const m = "0" + date.getMinutes();
       return `${h.slice(-2)}:${m.slice(-2)}`;
     }
+
+    // Log saat halaman dimuat
+    console.log("🚀 Chatbot Perpustakaan loaded successfully!");
+    console.log("💡 Tips: Buka Developer Tools untuk melihat detail analisis respons chatbot");
 
   </script>
 
